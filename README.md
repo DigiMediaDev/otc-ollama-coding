@@ -13,15 +13,17 @@ Terraform-based setup to run [Ollama](https://ollama.com) with large coding LLMs
 ## Architecture
 
 ```
-Your machine                  Open Telekom Cloud (eu-de-01)
+Your machine                  Open Telekom Cloud (eu-de region)
 ─────────────────             ──────────────────────────────────────────
 VS Code Continue              ┌─ VPC: 10.0.0.0/16
   │                           │   └─ Subnet: 10.0.1.0/24
   │ http://localhost:11434    │       └─ GPU Server (gpu-ollama-node)
   │                           │           ├─ Ollama :11434 (localhost only)
-  └──── SSH Tunnel ───────────┤           └─ EVS Volume /dev/vdb → /models
-         Port 22              │               ├─ qwen2.5-coder:32b (~20 GB)
-                              │               └─ qwen2.5-coder:14b (~9 GB)
+  └──── SSH Tunnel ───────────┤           └─ Root disk 100 GB (ephemeral)
+         Port 22              │
+                              ├─ OBS Bucket (region-wide, always kept)
+                              │   ├─ qwen2.5-coder:32b (~20 GB)
+                              │   └─ qwen2.5-coder:14b (~9 GB)
                               └─ Elastic IP (static, always kept)
 ```
 
@@ -32,26 +34,22 @@ VS Code Continue              ┌─ VPC: 10.0.0.0/16
 | `provider.tf` | OTC provider config, credentials via env vars |
 | `network.tf` | VPC, subnet, elastic IP (never destroyed) |
 | `security.tf` | Security group: SSH (22) + Ollama API (11434) |
-| `compute.tf` | GPU server, persistent EVS volume, cloud-init setup script |
+| `compute.tf` | GPU server with 100 GB root disk, cloud-init setup script |
 | `ki-start.sh` | Start script: terraform apply → wait for Ollama → open SSH tunnel |
-| `ki-stop.sh` | Stop script: destroy server + volume attachment, keep network & volume |
+| `ki-stop.sh` | Stop script: full terraform destroy (models stay safe in OBS) |
 
 ### compute.tf in detail
 
-Four resources are defined:
+Three resources are defined:
 
-1. **`opentelekomcloud_compute_keypair_v2`** — registers your public SSH key on OTC
-2. **`opentelekomcloud_blockstorage_volume_v2`** — 100 GB SSD EVS volume in `eu-de-01`, never destroyed by `ki-stop.sh`
-3. **`opentelekomcloud_compute_instance_v2`** — the GPU server with inline `user_data` script that:
+1. **`opentelekomcloud_images_image_v2`** (data source) — looks up the GPU image ID by name
+2. **`opentelekomcloud_compute_keypair_v2`** — registers your public SSH key on OTC
+3. **`opentelekomcloud_compute_instance_v2`** — the GPU server with a 100 GB boot volume and inline `user_data` script that:
    - Enables SSH TCP forwarding
-   - Installs Ollama
-   - Mounts the EVS volume to `/usr/share/ollama/.ollama/models`
-   - Formats the volume only on first use (`blkid` check)
-   - Runs `resize2fs` so the full volume size is always available
-   - Fixes permissions for the `ollama` system user
-   - Waits for the Ollama API to respond before pulling models
-   - Pulls `qwen2.5-coder:32b` and `qwen2.5-coder:14b` only if not already on the volume
-4. **`opentelekomcloud_compute_volume_attach_v2`** — attaches the EVS volume to the server
+   - Installs Ollama + AWS CLI
+   - Configures Ollama as a system service
+   - Waits for the Ollama API to respond
+   - Loads models from OBS if available (~5–10 min), otherwise pulls from Ollama.com and syncs to OBS
 
 ### ki-start.sh in detail
 
@@ -67,9 +65,8 @@ Four resources are defined:
 
 ```
 1. Kill local SSH tunnel
-2. terraform destroy -target volume_attachment
-3. terraform destroy -target server
-   → EVS volume, elastic IP and network resources are NOT destroyed
+2. terraform destroy   → full destroy of server, network, and elastic IP
+   Models remain safe in OBS — loaded again on next ki-start.sh (~5–10 min)
 ```
 
 ## First-time setup
@@ -102,9 +99,8 @@ terraform init
 ./ki-start.sh
 ```
 
-First boot takes **20–40 minutes** (Ollama install + model downloads ~29 GB from internet).
-Subsequent starts in the **same AZ** take **~3 minutes** — models are already on the EVS volume.
-Starts in a **different AZ** take **~5–10 minutes** — models are copied from OBS (internal OTC network).
+First boot ever takes **20–40 minutes** (Ollama install + model downloads ~29 GB from internet).
+All subsequent starts take **~5–10 minutes** — models are loaded from OBS (internal OTC network).
 
 ### Switch Availability Zone
 
@@ -114,9 +110,9 @@ If the GPU flavor is unavailable in the default AZ, pass the target AZ as argume
 ./ki-start.sh eu-de-02
 ```
 
-This creates a new EVS volume in `eu-de-02` and loads models from OBS instead of the internet.
+Models are always loaded from OBS — there is no AZ dependency for model storage.
 
-### Stop (preserve models and IP)
+### Stop
 
 ```bash
 ./ki-stop.sh
@@ -162,7 +158,7 @@ sudo journalctl -u ollama -n 50 --no-pager
 # List downloaded models
 ollama list
 
-# Check EVS volume mount
+# Check available disk space
 df -h /usr/share/ollama/.ollama/models
 ```
 
@@ -172,8 +168,7 @@ Models are automatically backed up to an OTC OBS bucket (`ollama-models-eu-de`) 
 
 | Scenario | Source | Duration |
 |----------|--------|----------|
-| Same AZ restart | EVS volume (local) | ~3 min |
-| Different AZ | OBS bucket (internal) | ~5–10 min |
+| Any restart | OBS bucket (internal) | ~5–10 min |
 | First boot ever | ollama.com (internet) | ~20–40 min |
 
 The OBS bucket is managed by Terraform and created automatically on first `terraform apply`.
@@ -190,7 +185,6 @@ aws s3 ls s3://ollama-models-eu-de/models/ --endpoint-url https://obs.eu-de.otc.
 | Resource | Cost |
 |----------|------|
 | p2s.2xlarge.8 (A100, 1x GPU) | ~4 €/hour (only while running) |
-| EVS Volume 100 GB SSD | ~4–5 €/month (always) |
 | OBS Bucket ~29 GB models | ~0.60 €/month (always) |
 | Elastic IP | ~0 €/month (free when associated) |
 
