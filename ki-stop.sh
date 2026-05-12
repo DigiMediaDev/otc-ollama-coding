@@ -1,10 +1,10 @@
 #!/bin/bash
-echo "🛑 Beende KI-Session..."
+echo "Stopping AI session..."
 
-# 1. SSH-Tunnel killen
+# 1. Kill SSH tunnel
 pkill -f "ssh -L 11434:localhost:11434"
 
-# 2. NUR den Server löschen (EIP, Netzwerk und Modell-Volume bleiben bestehen)
+# 2. Destroy server only — EIP, network and model volume are preserved
 terraform destroy \
   -target=opentelekomcloud_compute_volume_attach_v2.models_attach \
   -target=opentelekomcloud_compute_instance_v2.ai_server \
@@ -13,4 +13,4 @@ terraform destroy \
 SERVER_IP=$(terraform output -raw gpu_server_ip 2>/dev/null)
 [ -n "$SERVER_IP" ] && ssh-keygen -R "$SERVER_IP" 2>/dev/null
 
-echo "Server gelöscht. EVS Volume, EIP und Netzwerk bleiben erhalten."
+echo "Server destroyed. EVS volume, EIP and network are preserved."

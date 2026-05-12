@@ -1,21 +1,21 @@
-# Die Sicherheitsgruppe (Firewall-Regeln)
+# Security group (firewall rules)
 resource "opentelekomcloud_networking_secgroup_v2" "ai_secgroup" {
   name        = "ai-security-group"
-  description = "Regeln fuer OpenCode und SSH"
+  description = "Rules for Ollama API and SSH"
 }
 
-# Regel 1: SSH Zugriff (Port 22) fuer dich
+# Rule 1: SSH access (port 22)
 resource "opentelekomcloud_networking_secgroup_rule_v2" "ssh_rule" {
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
   port_range_min    = 22
   port_range_max    = 22
-  remote_ip_prefix  = "0.0.0.0/0" # Hier koenntest du spaeter deine eigene IP fuer mehr Sicherheit eintragen
+  remote_ip_prefix  = "0.0.0.0/0" # Replace with your IP for stricter access control
   security_group_id = opentelekomcloud_networking_secgroup_v2.ai_secgroup.id
 }
 
-# Regel 2: Ollama API (Port 11434) fuer OpenCode
+# Rule 2: Ollama API (port 11434)
 resource "opentelekomcloud_networking_secgroup_rule_v2" "ollama_rule" {
   direction         = "ingress"
   ethertype         = "IPv4"

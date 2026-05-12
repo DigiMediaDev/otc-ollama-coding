@@ -5,15 +5,14 @@ terraform {
   required_providers {
     opentelekomcloud = {
       source  = "opentelekomcloud/opentelekomcloud"
-      version = ">= 1.35.0" # Zieht sich automatisch die neueste, kompatible Version
+      version = ">= 1.35.0"
     }
   }
 }
 
-# Konfiguration des Providers
+# Provider configuration
 provider "opentelekomcloud" {
-  # Zugangsdaten (AK/SK) kommen sicher aus den OS_ Umgebungsvariablen!
-  # Wir geben hier nur noch hart die Region vor:
+  # Credentials (AK/SK) are read from OS_ACCESS_KEY / OS_SECRET_KEY environment variables
   region   = "eu-de"
   auth_url = "https://iam.eu-de.otc.t-systems.com/v3"
 }

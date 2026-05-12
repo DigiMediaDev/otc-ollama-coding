@@ -102,8 +102,19 @@ terraform init
 ./ki-start.sh
 ```
 
-First boot takes **20–40 minutes** (Ollama install + model downloads ~29 GB total).
-Subsequent starts take **~3 minutes** — models are already on the EVS volume.
+First boot takes **20–40 minutes** (Ollama install + model downloads ~29 GB from internet).
+Subsequent starts in the **same AZ** take **~3 minutes** — models are already on the EVS volume.
+Starts in a **different AZ** take **~5–10 minutes** — models are copied from OBS (internal OTC network).
+
+### Switch Availability Zone
+
+If the GPU flavor is unavailable in the default AZ, pass the target AZ as argument:
+
+```bash
+./ki-start.sh eu-de-02
+```
+
+This creates a new EVS volume in `eu-de-02` and loads models from OBS instead of the internet.
 
 ### Stop (preserve models and IP)
 
@@ -155,12 +166,32 @@ ollama list
 df -h /usr/share/ollama/.ollama/models
 ```
 
+## OBS model storage
+
+Models are automatically backed up to an OTC OBS bucket (`ollama-models-eu-de`) after the first download. On subsequent starts — even in a different AZ — models are loaded from OBS instead of the internet.
+
+| Scenario | Source | Duration |
+|----------|--------|----------|
+| Same AZ restart | EVS volume (local) | ~3 min |
+| Different AZ | OBS bucket (internal) | ~5–10 min |
+| First boot ever | ollama.com (internet) | ~20–40 min |
+
+The OBS bucket is managed by Terraform and created automatically on first `terraform apply`.
+
+```bash
+# Verify models are in OBS
+aws configure set aws_access_key_id "$OS_ACCESS_KEY"
+aws configure set aws_secret_access_key "$OS_SECRET_KEY"
+aws s3 ls s3://ollama-models-eu-de/models/ --endpoint-url https://obs.eu-de.otc.t-systems.com
+```
+
 ## Cost estimate (eu-de region)
 
 | Resource | Cost |
 |----------|------|
 | p2s.2xlarge.8 (A100, 1x GPU) | ~4 €/hour (only while running) |
 | EVS Volume 100 GB SSD | ~4–5 €/month (always) |
+| OBS Bucket ~29 GB models | ~0.60 €/month (always) |
 | Elastic IP | ~0 €/month (free when associated) |
 
 > The server is only billed while running. Stop it with `./ki-stop.sh` when not in use.
